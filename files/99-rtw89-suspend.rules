@@ -1,0 +1,2 @@
+# Prevent broken PCIe D3cold transitions on the Realtek RTL8852BE Wi-Fi controller (10ec:b852)
+SUBSYSTEM=="pci", ATTR{vendor}=="0x10ec", ATTR{device}=="0xb852", ATTR{d3cold_allowed}="0"

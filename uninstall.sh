@@ -14,28 +14,18 @@ log() {
   echo "[-] $*"
 }
 
-log "Removing modprobe configurations..."
+log "Removing modprobe configurations and udev rules..."
 rm -f /etc/modprobe.d/amd_pmc.conf
 rm -f /etc/modprobe.d/rtw89.conf
+rm -f /etc/udev/rules.d/99-rtw89-suspend.rules
+if command -v udevadm >/dev/null 2>&1; then
+  udevadm control --reload-rules || true
+fi
 
 log "Removing systemd hooks and overrides..."
 rm -f /lib/systemd/system-sleep/fix-ideapad-input.sh
 rm -f /lib/systemd/system-shutdown/fix-ideapad-poweroff.sh
 rm -f /etc/systemd/system.conf.d/50-ideapad-shutdown.conf
-
-GRUB_FILE="/etc/default/grub"
-if [ -f "${GRUB_FILE}" ]; then
-  log "Removing 'acpi=force' and 'amdgpu.dcdebugmask=0x10' from GRUB..."
-  CURRENT_CMDLINE="$(grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' "${GRUB_FILE}" | sed -E 's/^GRUB_CMDLINE_LINUX_DEFAULT="(.*)"/\1/')"
-  NEW_CMDLINE="$(echo "${CURRENT_CMDLINE}" | sed -E 's/\bacpi=force\b//g; s/\bamdgpu\.dcdebugmask=0x10\b//g' | xargs)"
-  sed -i -E "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"${NEW_CMDLINE}\"|" "${GRUB_FILE}"
-
-  if command -v update-grub >/dev/null 2>&1; then
-    update-grub
-  elif command -v grub-mkconfig >/dev/null 2>&1; then
-    grub-mkconfig -o /boot/grub/grub.cfg
-  fi
-fi
 
 echo ""
 echo "[!] Note: If you also want to remove the amd_pmc DKMS module, run:"

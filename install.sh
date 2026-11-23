@@ -79,20 +79,28 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 2. Kernel module options (modprobe.d)
+# 2. Kernel module options (modprobe.d) and udev rules
 # ------------------------------------------------------------------------------
 log "Installing /etc/modprobe.d/amd_pmc.conf and /etc/modprobe.d/rtw89.conf..."
 install -m 0644 "${FILES_DIR}/amd_pmc.conf" /etc/modprobe.d/amd_pmc.conf
 install -m 0644 "${FILES_DIR}/rtw89.conf" /etc/modprobe.d/rtw89.conf
 
+log "Installing udev rule /etc/udev/rules.d/99-rtw89-suspend.rules (disable D3cold on RTL8852BE)..."
+mkdir -p /etc/udev/rules.d
+install -m 0644 "${FILES_DIR}/99-rtw89-suspend.rules" /etc/udev/rules.d/99-rtw89-suspend.rules
+if command -v udevadm >/dev/null 2>&1; then
+  udevadm control --reload-rules || true
+  udevadm trigger --subsystem-match=pci --attr-match=vendor=0x10ec --attr-match=device=0xb852 || true
+fi
+
 # ------------------------------------------------------------------------------
-# 3. systemd hooks (sleep and shutdown)
+# 3. systemd hooks (sleep and shutdown/reboot)
 # ------------------------------------------------------------------------------
 log "Installing sleep hook to /lib/systemd/system-sleep/fix-ideapad-input.sh..."
 mkdir -p /lib/systemd/system-sleep
 install -m 0755 "${FILES_DIR}/fix-ideapad-input.sh" /lib/systemd/system-sleep/fix-ideapad-input.sh
 
-log "Installing shutdown hook to /lib/systemd/system-shutdown/fix-ideapad-poweroff.sh..."
+log "Installing shutdown/reboot hook to /lib/systemd/system-shutdown/fix-ideapad-poweroff.sh..."
 mkdir -p /lib/systemd/system-shutdown
 install -m 0755 "${FILES_DIR}/fix-ideapad-poweroff.sh" /lib/systemd/system-shutdown/fix-ideapad-poweroff.sh
 
@@ -101,39 +109,30 @@ mkdir -p /etc/systemd/system.conf.d
 install -m 0644 "${FILES_DIR}/50-ideapad-shutdown.conf" /etc/systemd/system.conf.d/50-ideapad-shutdown.conf
 
 # ------------------------------------------------------------------------------
-# 4. GRUB kernel parameters (acpi=force amdgpu.dcdebugmask=0x10)
+# 4. Keep GRUB clean (remove legacy/regressive flags if present from older setups)
 # ------------------------------------------------------------------------------
 GRUB_FILE="/etc/default/grub"
 if [ -f "${GRUB_FILE}" ]; then
-  BACKUP_FILE="${GRUB_FILE}.ideapad-fix.bak.$(date +%Y%m%d%H%M%S)"
-  cp "${GRUB_FILE}" "${BACKUP_FILE}"
-  log "Saved GRUB backup to ${BACKUP_FILE}"
-
   CURRENT_CMDLINE="$(grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' "${GRUB_FILE}" | sed -E 's/^GRUB_CMDLINE_LINUX_DEFAULT="(.*)"/\1/')"
-  NEW_CMDLINE="${CURRENT_CMDLINE}"
+  CLEAN_CMDLINE="$(echo "${CURRENT_CMDLINE}" | sed -E 's/\bacpi=force\b//g; s/\bamdgpu\.dcdebugmask=0x10\b//g; s/\bi8042\.(reset|nomux|nopnp|noloop)\b//g' | xargs)"
 
-  for param in "acpi=force" "amdgpu.dcdebugmask=0x10"; do
-    case " ${NEW_CMDLINE} " in
-      *" ${param} "*) ;;
-      *) NEW_CMDLINE="${NEW_CMDLINE} ${param}" ;;
-    esac
-  done
+  if [ "${CURRENT_CMDLINE}" != "${CLEAN_CMDLINE}" ]; then
+    BACKUP_FILE="${GRUB_FILE}.ideapad-fix.bak.$(date +%Y%m%d%H%M%S)"
+    cp "${GRUB_FILE}" "${BACKUP_FILE}"
+    log "Saved GRUB backup to ${BACKUP_FILE}"
+    sed -i -E "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"${CLEAN_CMDLINE}\"|" "${GRUB_FILE}"
+    log "Cleaned GRUB_CMDLINE_LINUX_DEFAULT to: \"${CLEAN_CMDLINE}\""
 
-  # Trim redundant whitespace
-  NEW_CMDLINE="$(echo "${NEW_CMDLINE}" | xargs)"
-
-  sed -i -E "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"${NEW_CMDLINE}\"|" "${GRUB_FILE}"
-  log "Updated GRUB_CMDLINE_LINUX_DEFAULT to: \"${NEW_CMDLINE}\""
-
-  if command -v update-grub >/dev/null 2>&1; then
-    update-grub
-  elif command -v grub-mkconfig >/dev/null 2>&1; then
-    grub-mkconfig -o /boot/grub/grub.cfg
+    if command -v update-grub >/dev/null 2>&1; then
+      update-grub
+    elif command -v grub-mkconfig >/dev/null 2>&1; then
+      grub-mkconfig -o /boot/grub/grub.cfg
+    else
+      warn "Neither update-grub nor grub-mkconfig found. Please update your bootloader manually."
+    fi
   else
-    warn "Neither update-grub nor grub-mkconfig found. Please update your bootloader manually."
+    log "GRUB_CMDLINE_LINUX_DEFAULT is already clean (\"${CURRENT_CMDLINE}\")."
   fi
-else
-  warn "${GRUB_FILE} not found. Manually add 'acpi=force amdgpu.dcdebugmask=0x10' to your bootloader config."
 fi
 
 # ------------------------------------------------------------------------------
